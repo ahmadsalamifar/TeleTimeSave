@@ -1,1 +1,18 @@
-include ':app', ':libtd'
+// settings.gradle.kts
+pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS) // modern DSL
+    repositories {
+        google()
+        mavenCentral()
+        maven { url = uri("https://jitpack.io") }
+        maven { url = uri("https://oss.sonatype.org/content/repositories/releases/") }
+        maven { url = uri("${rootDir}/local_repo") } // فقط اگر کتابخانه محلی دارید
+    }
+}
