@@ -1,5 +1,6 @@
 package com.ibashkimi.telegram.ui.chat
 
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -55,25 +56,39 @@ fun ChatScreen(
                     IconButton(onClick = { navController.navigateUp() }) {
                         Icon(
                             imageVector = Icons.Default.ArrowBack,
-                            contentDescription = null
+                            contentDescription = "Back"
                         )
                     }
                 })
         },
-        content = {
-            ChatContent(viewModel)
+        content = { paddingValues ->
+            ChatContent(
+                viewModel = viewModel,
+                modifier = Modifier.padding(paddingValues),
+                // Placeholder for the actual save function from ViewModel
+                onSaveMessageClicked = { messageId, fileId ->
+                    Log.d("ChatScreen", "Save clicked for messageId: $messageId, fileId: $fileId")
+                    // This will be replaced by viewModel.initiateSaveMedia(messageId, fileId)
+                    viewModel.initiateSaveMedia(messageId, fileId) // Assuming this function will be created
+                }
+            )
         }
     )
 }
 
 @Composable
-fun ChatContent(viewModel: ChatScreenViewModel, modifier: Modifier = Modifier) {
+fun ChatContent(
+    viewModel: ChatScreenViewModel,
+    onSaveMessageClicked: (messageId: Long, fileId: Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
     val history = viewModel.messagesPaged.collectAsLazyPagingItems()
 
     Column(modifier = modifier.fillMaxWidth()) {
         ChatHistory(
             client = viewModel.client,
             messages = history,
+            onSaveMessageClicked = onSaveMessageClicked,
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1.0f)
@@ -87,17 +102,19 @@ fun ChatContent(viewModel: ChatScreenViewModel, modifier: Modifier = Modifier) {
             }, attachFile = {
                 // todo
             }, sendMessage = {
-                scope.launch {
-                    viewModel.sendMessage(
-                        inputMessageContent = TdApi.InputMessageText(
-                            TdApi.FormattedText(
-                                it,
-                                emptyArray()
-                            ), false, false
-                        )
-                    ).await()
-                    input.value = TextFieldValue()
-                    history.refresh()
+                if (it.isNotBlank()) { // Ensure message is not blank
+                    scope.launch {
+                        viewModel.sendMessage(
+                            inputMessageContent = TdApi.InputMessageText(
+                                TdApi.FormattedText(
+                                    it,
+                                    emptyArray()
+                                ), false, false
+                            )
+                        ).await()
+                        input.value = TextFieldValue() // Clear input
+                        history.refresh() // Refresh messages
+                    }
                 }
             })
     }
@@ -105,54 +122,60 @@ fun ChatContent(viewModel: ChatScreenViewModel, modifier: Modifier = Modifier) {
 
 @Composable
 fun ChatLoading(modifier: Modifier = Modifier) {
-    Text(
-        text = stringResource(R.string.loading),
-        style = MaterialTheme.typography.h5,
-        modifier = modifier
-            .fillMaxSize()
-            .wrapContentSize(Alignment.Center)
-    )
+    Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text(
+            text = stringResource(R.string.loading),
+            style = MaterialTheme.typography.h5,
+        )
+    }
 }
 
 @Composable
 fun ChatHistory(
     client: TelegramClient,
     messages: LazyPagingItems<TdApi.Message>,
+    onSaveMessageClicked: (messageId: Long, fileId: Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     LazyColumn(modifier = modifier, reverseLayout = true) {
-        when {
-            messages.loadState.refresh is LoadState.Loading -> {
+        when (val refreshState = messages.loadState.refresh) {
+            is LoadState.Loading -> {
+                item { ChatLoading(Modifier.fillParentMaxSize()) }
+            }
+            is LoadState.Error -> {
                 item {
-                    ChatLoading()
+                    Box(modifier = Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "Cannot load messages: ${refreshState.error.localizedMessage}",
+                            style = MaterialTheme.typography.h5,
+                            color = MaterialTheme.colors.error
+                        )
+                    }
                 }
             }
-            messages.loadState.refresh is LoadState.Error -> {
-                item {
-                    Text(
-                        text = "Cannot load messages",
-                        style = MaterialTheme.typography.h5,
-                        modifier = modifier
-                            .fillMaxSize()
-                            .wrapContentSize(Alignment.Center)
-                    )
-                }
-            }
-            messages.loadState.refresh is LoadState.NotLoading && messages.itemCount == 0 -> {
-                item {
-                    Text("Empty")
+            is LoadState.NotLoading -> {
+                if (messages.itemCount == 0) {
+                    item {
+                        Box(modifier = Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("Empty chat")
+                        }
+                    }
                 }
             }
         }
-        itemsIndexed(messages) { i, message ->
+        itemsIndexed(messages, key = { _, message -> message.id }) { index, message ->
             message?.let {
-                val userId = (message.sender as TdApi.MessageSenderUser).userId
-                val previousMessageUserId =
-                    if (i > 0) (messages[i - 1]?.sender as TdApi.MessageSenderUser?)?.userId else null
+                // Ensure sender is User before casting; handle other sender types if necessary
+                val currentMessageSenderUser = message.sender as? TdApi.MessageSenderUser
+                val previousMessageSenderUser = if (index < messages.itemCount - 1) { // Check bounds for previous
+                    messages.peek(index + 1)?.sender as? TdApi.MessageSenderUser
+                } else null
+
                 MessageItem(
-                    isSameUserFromPreviousMessage = userId == previousMessageUserId,
-                    client,
-                    it
+                    isSameUserFromPreviousMessage = currentMessageSenderUser?.userId == previousMessageSenderUser?.userId,
+                    client = client,
+                    message = it,
+                    onSaveMessageClicked = onSaveMessageClicked
                 )
             }
         }
@@ -164,50 +187,50 @@ private fun MessageItem(
     isSameUserFromPreviousMessage: Boolean,
     client: TelegramClient,
     message: TdApi.Message,
+    onSaveMessageClicked: (messageId: Long, fileId: Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    if (message.isOutgoing) {
-        Box(
-            Modifier
-                .clickable(onClick = {})
-                .fillMaxWidth(),
-            contentAlignment = Alignment.BottomEnd
-        ) {
-            MessageItemCard(modifier = Modifier.padding(8.dp, 4.dp, 8.dp, 4.dp)) {
-                MessageItemContent(
-                    client,
-                    message,
-                    modifier = Modifier
-                        .background(Color.Green.copy(alpha = 0.2f))
-                        .padding(8.dp)
-                )
-            }
-        }
+    val messageAlignment = if (message.isOutgoing) Alignment.CenterEnd else Alignment.CenterStart
+    val contentPadding = if (message.isOutgoing) {
+        PaddingValues(start = 50.dp, end = 8.dp, top = 4.dp, bottom = 4.dp)
     } else {
-        Row(
-            verticalAlignment = Alignment.Bottom,
-            modifier = Modifier.clickable(onClick = {}) then modifier.fillMaxWidth()
-        ) {
-            if (!isSameUserFromPreviousMessage) {
-                ChatUserIcon(
-                    client,
-                    (message.sender as TdApi.MessageSenderUser).userId,
-                    Modifier
-                        .padding(8.dp)
-                        .clip(shape = CircleShape)
-                        .size(42.dp)
-                )
-            } else {
-                Box(
-                    Modifier
-                        .padding(8.dp)
-                        .size(42.dp))
+        PaddingValues(start = 8.dp, end = 50.dp, top = 4.dp, bottom = 4.dp)
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(contentPadding),
+        contentAlignment = messageAlignment
+    ) {
+        Row(verticalAlignment = Alignment.Bottom) {
+            if (!message.isOutgoing && !isSameUserFromPreviousMessage) {
+                val senderUser = message.sender as? TdApi.MessageSenderUser
+                if (senderUser != null) {
+                    ChatUserIcon(
+                        client = client,
+                        userId = senderUser.userId,
+                        modifier = Modifier
+                            .padding(end = 8.dp)
+                            .size(42.dp)
+                            .clip(CircleShape)
+                    )
+                }
+            } else if (!message.isOutgoing) {
+                Spacer(Modifier.width(50.dp)) // Space for icon if not shown
             }
-            MessageItemCard(modifier = Modifier.padding(0.dp, 4.dp, 8.dp, 4.dp)) {
+
+            MessageItemCard { // Removed modifier here, will be applied by Box
                 MessageItemContent(
-                    client,
-                    message,
-                    modifier = Modifier.padding(8.dp)
+                    client = client,
+                    message = message,
+                    onSaveMessageClicked = onSaveMessageClicked,
+                    modifier = Modifier
+                        .background(
+                            if (message.isOutgoing) Color.Green.copy(alpha = 0.2f)
+                            else MaterialTheme.colors.surface // Or another color for incoming
+                        )
+                        .padding(8.dp)
                 )
             }
         }
@@ -216,12 +239,12 @@ private fun MessageItem(
 
 @Composable
 private fun MessageItemCard(
-    modifier: Modifier = Modifier,
+    // modifier: Modifier = Modifier, // Modifier removed, applied by MessageItem's Box
     content: @Composable () -> Unit
 ) = Card(
     elevation = 2.dp,
     shape = RoundedCornerShape(8.dp),
-    modifier = modifier,
+    // modifier = modifier, // Modifier removed
     content = content
 )
 
@@ -229,37 +252,39 @@ private fun MessageItemCard(
 private fun MessageItemContent(
     client: TelegramClient,
     message: TdApi.Message,
+    onSaveMessageClicked: (messageId: Long, fileId: Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     when (message.content) {
         is TdApi.MessageText -> TextMessage(message, modifier)
-        is TdApi.MessageVideo -> VideoMessage(message, modifier)
+        is TdApi.MessageVideo -> VideoMessage(client, message, onSaveClicked = onSaveMessageClicked, modifier)
         is TdApi.MessageCall -> CallMessage(message, modifier)
         is TdApi.MessageAudio -> AudioMessage(message, modifier)
         is TdApi.MessageSticker -> StickerMessage(client, message, modifier)
         is TdApi.MessageAnimation -> AnimationMessage(client, message, modifier)
-        is TdApi.MessagePhoto -> PhotoMessage(client, message, Modifier)
+        is TdApi.MessagePhoto -> PhotoMessage(client, message, onSaveClicked = onSaveMessageClicked, modifier)
         is TdApi.MessageVideoNote -> VideoNoteMessage(client, message, modifier)
         is TdApi.MessageVoiceNote -> VoiceNoteMessage(message, modifier)
-        else -> UnsupportedMessage()
+        else -> UnsupportedMessage(modifier)
     }
 }
 
 @Composable
 private fun ChatUserIcon(client: TelegramClient, userId: Int, modifier: Modifier) {
-    val user = client.send<TdApi.User>(TdApi.GetUser(userId)).collectAsState(initial = null).value
+    val userFlow = remember(userId) { client.send<TdApi.User>(TdApi.GetUser(userId)) }
+    val user = userFlow.collectAsState(initial = null).value
     TelegramImage(client, user?.profilePhoto?.small, modifier = modifier)
 }
 
 @Composable
 fun MessageInput(
     modifier: Modifier = Modifier,
-    input: MutableState<TextFieldValue> = remember { mutableStateOf(TextFieldValue("")) },
-    insertGif: () -> Unit = {},
-    attachFile: () -> Unit = {},
-    sendMessage: (String) -> Unit = {}
+    input: MutableState<TextFieldValue>, // Removed default
+    insertGif: () -> Unit, // Removed default
+    attachFile: () -> Unit, // Removed default
+    sendMessage: (String) -> Unit // Removed default
 ) {
-    Surface(modifier, color = MaterialTheme.colors.surface, elevation = 6.dp) {
+    Surface(modifier.fillMaxWidth(), color = MaterialTheme.colors.surface, elevation = 6.dp) { // Added fillMaxWidth
         TextField(
             value = input.value,
             modifier = Modifier.fillMaxWidth(),
@@ -272,7 +297,7 @@ fun MessageInput(
                 IconButton(onClick = insertGif) {
                     Icon(
                         imageVector = Icons.Default.Gif,
-                        contentDescription = null
+                        contentDescription = "Insert GIF"
                     )
                 }
             },
@@ -282,13 +307,13 @@ fun MessageInput(
                         IconButton(onClick = attachFile) {
                             Icon(
                                 imageVector = Icons.Outlined.AttachFile,
-                                contentDescription = null
+                                contentDescription = "Attach File"
                             )
                         }
-                        IconButton(onClick = { }) {
+                        IconButton(onClick = { /* TODO: Implement Mic Action */ }) {
                             Icon(
                                 imageVector = Icons.Outlined.Mic,
-                                contentDescription = null
+                                contentDescription = "Record Voice"
                             )
                         }
                     }
@@ -296,12 +321,16 @@ fun MessageInput(
                     IconButton(onClick = { sendMessage(input.value.text) }) {
                         Icon(
                             imageVector = Icons.Outlined.Send,
-                            contentDescription = null
+                            contentDescription = "Send Message"
                         )
                     }
                 }
             },
-            colors = TextFieldDefaults.textFieldColors(backgroundColor = MaterialTheme.colors.surface)
+            colors = TextFieldDefaults.textFieldColors(
+                backgroundColor = MaterialTheme.colors.surface,
+                focusedIndicatorColor = Color.Transparent, // Optional: remove indicator
+                unfocusedIndicatorColor = Color.Transparent // Optional: remove indicator
+            )
         )
     }
 }

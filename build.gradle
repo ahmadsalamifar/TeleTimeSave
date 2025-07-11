@@ -1,19 +1,21 @@
 buildscript {
     ext {
-        compileSdkVersion = 30
-        buildToolsVersion = '30.0.3'
-        minSdkVersion = 21
-        targetSdkVersion = 30
-        kotlinVersion = '1.4.32'
-        compose = '1.0.0-beta06'
-        hilt_version = '2.35.1'
+        compileSdkVersion = 34
+        buildToolsVersion = '34.0.0' // Usually not needed with modern AGP
+        minSdkVersion = 23 // Consider updating minSdkVersion
+        targetSdkVersion = 34
+        kotlinVersion = '1.9.23'
+        composeCompilerVersion = '1.5.11' // Compose Compiler version tied to Kotlin version
+        composeVersion = '1.6.7' // Latest stable Compose version
+        hilt_version = '2.51.1' // Latest stable Hilt version
+        agpVersion = '8.4.0'
     }
     repositories {
         google()
         mavenCentral()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:7.0.0-alpha15'
+        classpath "com.android.tools.build:gradle:$agpVersion"
         classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion"
         classpath "com.google.dagger:hilt-android-gradle-plugin:$hilt_version"
     }
@@ -23,9 +25,7 @@ allprojects {
     repositories {
         google()
         mavenCentral()
-        maven {
-            url "https://kotlin.bintray.com/kotlinx"
-        }
+        // bintray is deprecated, kotlinx is usually on mavenCentral or google
     }
 }
 

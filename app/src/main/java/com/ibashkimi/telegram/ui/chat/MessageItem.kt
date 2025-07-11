@@ -2,9 +2,11 @@ package com.ibashkimi.telegram.ui.chat
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.Icon
+import androidx.compose.material.IconButton
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.outlined.Call
 import androidx.compose.material.icons.outlined.Done
 import androidx.compose.material.icons.outlined.Pending
@@ -18,29 +20,36 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
-import com.google.accompanist.coil.CoilImage
 import com.ibashkimi.telegram.data.TelegramClient
-import com.ibashkimi.telegram.ui.util.TelegramImage
+import com.ibashkimi.telegram.ui.util.TelegramImage // Assuming this handles CoilImage or similar
 import org.drinkless.td.libcore.telegram.TdApi
-import java.io.File
+import java.io.File // Keep for CoilImage if used directly in TelegramImage or here
 import java.util.*
+// import com.google.accompanist.coil.CoilImage // Replaced by io.coil-kt:coil-compose
 
 @Composable
 fun TextMessage(message: TdApi.Message, modifier: Modifier = Modifier) {
     Column(modifier = modifier, horizontalAlignment = Alignment.End) {
-        TextMessage(message.content as TdApi.MessageText)
+        val content = message.content as? TdApi.MessageText ?: return TextUnsupportFormat(modifier)
+        TextMessageContent(content)
         MessageStatus(message)
     }
 }
 
 @Composable
-private fun TextMessage(content: TdApi.MessageText, modifier: Modifier = Modifier) {
+private fun TextUnsupportFormat(modifier: Modifier = Modifier) {
+    Text(text = "<Unsupported Text Format>", modifier = modifier)
+}
+
+
+@Composable
+private fun TextMessageContent(content: TdApi.MessageText, modifier: Modifier = Modifier) {
     Text(text = content.text.text, modifier = modifier)
 }
 
 @Composable
 fun AudioMessage(message: TdApi.Message, modifier: Modifier = Modifier) {
-    val content = message.content as TdApi.MessageAudio
+    val content = message.content as? TdApi.MessageAudio ?: return UnsupportedMessage(title = "<Audio Error>")
     Column(modifier = modifier, horizontalAlignment = Alignment.End) {
         Text(text = "Audio ${content.audio.duration}", modifier = modifier)
         content.caption.text.takeIf { it.isNotBlank() }?.let {
@@ -51,14 +60,36 @@ fun AudioMessage(message: TdApi.Message, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun VideoMessage(message: TdApi.Message, modifier: Modifier = Modifier) {
-    val content = message.content as TdApi.MessageVideo
+fun VideoMessage(
+    client: TelegramClient, // Added client for consistency, might be used for thumbnail later
+    message: TdApi.Message,
+    onSaveClicked: (messageId: Long, fileId: Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val content = message.content as? TdApi.MessageVideo ?: return UnsupportedMessage(title = "<Video Error>")
     Column(modifier = modifier, horizontalAlignment = Alignment.End) {
-        Text(text = "Video ${content.video.duration}", modifier = modifier)
+        // TODO: Implement actual video thumbnail display using client if needed
+        // For now, showing text placeholder similar to original
+        Text(text = "Video ${content.video.duration}s (TTL: ${message.ttl}s)")
         content.caption.text.takeIf { it.isNotBlank() }?.let {
             Text(it)
         }
-        MessageStatus(message)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.End,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            if (message.ttl > 0) {
+                val videoFileId = content.video.video.id
+                if (videoFileId != 0) {
+                    IconButton(onClick = { onSaveClicked(message.id, videoFileId) }) {
+                        Icon(Icons.Filled.Save, contentDescription = "Save Video")
+                    }
+                }
+            }
+            Spacer(Modifier.weight(1f)) // Pushes MessageStatus to the end if Row is fillMaxWidth
+            MessageStatus(message/*, Modifier.padding(start = 4.dp)*/) // Padding might not be needed if Spacer is used
+        }
     }
 }
 
@@ -68,14 +99,15 @@ fun StickerMessage(
     message: TdApi.Message,
     modifier: Modifier = Modifier
 ) {
+    val content = message.content as? TdApi.MessageSticker ?: return UnsupportedMessage(title = "<Sticker Error>")
     Column(modifier = modifier, horizontalAlignment = Alignment.End) {
-        StickerMessage(client, message.content as TdApi.MessageSticker)
+        StickerMessageContent(client, content)
         MessageStatus(message)
     }
 }
 
 @Composable
-private fun StickerMessage(
+private fun StickerMessageContent(
     client: TelegramClient,
     content: TdApi.MessageSticker,
     modifier: Modifier = Modifier
@@ -98,70 +130,105 @@ fun AnimationMessage(
     message: TdApi.Message,
     modifier: Modifier = Modifier
 ) {
-    val content = message.content as TdApi.MessageAnimation
-    val path =
-        client.downloadableFile(content.animation.animation).collectAsState(initial = null)
-    Column {
-        path.value?.let { filePath ->
-            CoilImage(data = File(filePath), modifier = Modifier.size(56.dp)) {
+    val content = message.content as? TdApi.MessageAnimation ?: return UnsupportedMessage(title = "<Animation Error>")
+    // Assuming TelegramImage can handle animation or uses Coil/Glide which can.
+    val animationFile = content.animation.animation
+    val pathFlow = client.downloadableFile(animationFile).collectAsState(initial = null)
 
-            }
-        } ?: Text(text = "path null", modifier = modifier)
-        Text(text = "path: ${path.value}")
-    }
-}
-
-@Composable
-fun CallMessage(message: TdApi.Message, modifier: Modifier = Modifier) {
     Column(modifier = modifier, horizontalAlignment = Alignment.End) {
-        CallMessage(message.content as TdApi.MessageCall)
+        // Display the animation using TelegramImage or a specific Composable for animations
+        TelegramImage(client = client, file = animationFile, modifier = Modifier.size(150.dp))
+        // Optionally, show path or download status for debugging
+        // pathFlow.value?.let { Text("Path: $it") } ?: Text("Path: N/A")
         MessageStatus(message)
     }
 }
 
 @Composable
-private fun CallMessage(content: TdApi.MessageCall, modifier: Modifier = Modifier) {
+fun CallMessage(message: TdApi.Message, modifier: Modifier = Modifier) {
+    val content = message.content as? TdApi.MessageCall ?: return UnsupportedMessage(title = "<Call Error>")
+    Column(modifier = modifier, horizontalAlignment = Alignment.End) {
+        CallMessageContent(content)
+        MessageStatus(message)
+    }
+}
+
+@Composable
+private fun CallMessageContent(content: TdApi.MessageCall, modifier: Modifier = Modifier) {
     val msg = when (content.discardReason) {
-        is TdApi.CallDiscardReasonHungUp -> {
-            "Incoming call"
-        }
-        is TdApi.CallDiscardReasonDeclined -> {
-            "Declined call"
-        }
-        is TdApi.CallDiscardReasonDisconnected -> {
-            "Call disconnected"
-        }
-        is TdApi.CallDiscardReasonMissed -> {
-            "Missed call"
-        }
-        is TdApi.CallDiscardReasonEmpty -> {
-            "Call: Unknown state"
-        }
+        is TdApi.CallDiscardReasonHungUp -> "Incoming call"
+        is TdApi.CallDiscardReasonDeclined -> "Declined call"
+        is TdApi.CallDiscardReasonDisconnected -> "Call disconnected"
+        is TdApi.CallDiscardReasonMissed -> "Missed call"
+        is TdApi.CallDiscardReasonEmpty -> "Call: Unknown state"
         else -> "Call: Unknown state"
     }
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
-        Text(text = msg, modifier = modifier)
+        Text(text = msg) // Removed modifier = modifier from here as Row has it
         Icon(
             imageVector = Icons.Outlined.Call,
             contentDescription = null,
             modifier = Modifier
-                .padding(8.dp)
+                .padding(start = 8.dp) // Only start padding if text is before it
                 .size(18.dp)
         )
     }
 }
 
 @Composable
-fun PhotoMessage(client: TelegramClient, message: TdApi.Message, modifier: Modifier = Modifier) {
+fun PhotoMessage(
+    client: TelegramClient,
+    message: TdApi.Message,
+    onSaveClicked: (messageId: Long, fileId: Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val content = message.content as? TdApi.MessagePhoto ?: return UnsupportedMessage(title = "<Photo Error>")
     Column(modifier = modifier, horizontalAlignment = Alignment.End) {
-        PhotoMessage(client, message.content as TdApi.MessagePhoto)
-        MessageStatus(message, Modifier.padding(4.dp))
+        PhotoMessageContent(client, content)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.End,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            if (message.ttl > 0) {
+                val photoFileId = content.photo.sizes.lastOrNull()?.photo?.id
+                if (photoFileId != null && photoFileId != 0) {
+                    IconButton(onClick = { onSaveClicked(message.id, photoFileId) }) {
+                        Icon(Icons.Filled.Save, contentDescription = "Save Photo")
+                    }
+                }
+            }
+            Spacer(Modifier.weight(1f)) // Pushes MessageStatus to the end
+            MessageStatus(message/*, Modifier.padding(start = 4.dp)*/)
+        }
     }
-    /*Box(modifier, contentAlignment = Alignment.BottomEnd) {
-        PhotoMessage(client, message.content as TdApi.MessagePhoto)
-        MessageStatus(message = message, modifier = Modifier.padding(8.dp).background(Color.Magenta))
-    }*/
 }
+
+@Composable
+private fun PhotoMessageContent(
+    client: TelegramClient,
+    content: TdApi.MessagePhoto, // Changed from TdApi.MessagePhoto to content
+    modifier: Modifier = Modifier
+) {
+    val photoSize = content.photo.sizes.lastOrNull() // Get the largest available size
+    if (photoSize == null) {
+        UnsupportedMessage(title = "<Photo unavailable>")
+        return
+    }
+    val width: Dp = with(LocalDensity.current) {
+        photoSize.width.toDp()
+    }
+    Column(modifier.width(min(200.dp, width))) { // Use the passed modifier
+        TelegramImage(
+            client,
+            photoSize.photo, // Pass the TdApi.File object
+            modifier = Modifier.fillMaxWidth()
+        )
+        content.caption.text.takeIf { it.isNotEmpty() }
+            ?.let { Text(text = it, Modifier.padding(top = 4.dp)) } // Simpler padding
+    }
+}
+
 
 @Composable
 fun VideoNoteMessage(
@@ -169,11 +236,12 @@ fun VideoNoteMessage(
     message: TdApi.Message,
     modifier: Modifier = Modifier
 ) {
+    val content = message.content as? TdApi.MessageVideoNote ?: return UnsupportedMessage(title = "<Video Note Error>")
     Column(modifier = modifier, horizontalAlignment = Alignment.End) {
-        Text("<Video note>")
+        Text("<Video note>") // Placeholder
         TelegramImage(
             client,
-            (message.content as TdApi.MessageVideoNote).videoNote.thumbnail?.file,
+            content.videoNote.thumbnail?.file,
             Modifier.size(150.dp)
         )
         MessageStatus(message)
@@ -185,64 +253,48 @@ fun VoiceNoteMessage(
     message: TdApi.Message,
     modifier: Modifier = Modifier
 ) {
+    val content = message.content as? TdApi.MessageVoiceNote ?: return UnsupportedMessage(title = "<Voice Note Error>")
     Column(modifier = modifier, horizontalAlignment = Alignment.End) {
-        Text("<Voice note>")
-        (message.content as TdApi.MessageVoiceNote).caption.text.takeIf { it.isNotBlank() }?.let {
-            Text(it, Modifier.padding(4.dp, 4.dp, 4.dp, 0.dp))
+        Text("<Voice note>") // Placeholder
+        content.caption.text.takeIf { it.isNotBlank() }?.let {
+            Text(it, Modifier.padding(top = 4.dp))
         }
         MessageStatus(message)
     }
 }
 
 @Composable
-private fun PhotoMessage(
-    client: TelegramClient,
-    message: TdApi.MessagePhoto,
-    modifier: Modifier = Modifier
-) {
-    val photo = message.photo.sizes.last()
-    val width: Dp = with(LocalDensity.current) {
-        photo.width.toDp()
-    }
-    Column(modifier.width(min(200.dp, width))) {
-        TelegramImage(
-            client,
-            message.photo.sizes.last().photo,
-            modifier = Modifier.fillMaxWidth()
-        )
-        message.caption.text.takeIf { it.isNotEmpty() }
-            ?.let { Text(text = it, Modifier.padding(4.dp, 4.dp, 4.dp, 0.dp)) }
-    }
-}
-
-@Composable
 fun UnsupportedMessage(modifier: Modifier = Modifier, title: String? = null) {
-    Text(title ?: "<Unsupported message>", modifier = modifier)
+    Text(title ?: "<Unsupported message>", modifier = modifier.padding(8.dp))
 }
 
 @Composable
 private fun MessageStatus(message: TdApi.Message, modifier: Modifier = Modifier) {
-    if (message.isOutgoing) {
-        Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
-            MessageTime(message = message)
-            MessageSendingState(message.sendingState, modifier.size(16.dp))
+    val alignmentAndPadding = if (message.isOutgoing) Modifier.padding(start = 8.dp) else Modifier
+    Row(
+        modifier = modifier.then(alignmentAndPadding), // Combine modifiers
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        MessageTime(message = message)
+        if (message.isOutgoing) {
+            MessageSendingState(message.sendingState, Modifier.size(16.dp).padding(start = 4.dp))
         }
-    } else {
-        MessageTime(message = message, modifier = modifier)
     }
 }
 
 @Composable
 private fun MessageTime(message: TdApi.Message, modifier: Modifier = Modifier) {
-    val date = Date(message.date.toLong())
+    // Original date formatting logic
+    val date = Date(message.date * 1000L) // Assuming message.date is in seconds
     val calendar = Calendar.getInstance().apply { time = date }
     val hour = calendar.get(Calendar.HOUR_OF_DAY)
     val minute = calendar.get(Calendar.MINUTE)
-    MessageTime(text = "$hour:$minute", modifier = modifier.alpha(0.6f))
+    val timeString = String.format(Locale.getDefault(), "%02d:%02d", hour, minute)
+    MessageTimeText(text = timeString, modifier = modifier.alpha(0.6f))
 }
 
 @Composable
-private fun MessageTime(text: String, modifier: Modifier = Modifier) {
+private fun MessageTimeText(text: String, modifier: Modifier = Modifier) { // Renamed to avoid conflict
     Text(
         text,
         style = MaterialTheme.typography.caption,
@@ -256,25 +308,32 @@ private fun MessageSendingState(
     sendingState: TdApi.MessageSendingState?,
     modifier: Modifier = Modifier
 ) {
-    when (sendingState) {
-        is TdApi.MessageSendingStatePending -> {
+    when (sendingState?.constructor) { // Safe call for constructor
+        TdApi.MessageSendingStatePending.CONSTRUCTOR -> {
             Icon(
                 imageVector = Icons.Outlined.Pending,
-                contentDescription = null,
+                contentDescription = "Pending", // Added content description
                 modifier = modifier
             )
         }
-        is TdApi.MessageSendingStateFailed -> {
+        TdApi.MessageSendingStateFailed.CONSTRUCTOR -> {
             Icon(
                 imageVector = Icons.Outlined.SyncProblem,
-                contentDescription = null,
+                contentDescription = "Failed", // Added content description
                 modifier = modifier
             )
         }
-        else -> {
+        null -> { // Handle null sendingState (e.g. for incoming messages if this composable was misused)
+             Icon(
+                imageVector = Icons.Outlined.Done, // Default for received messages
+                contentDescription = "Sent/Read",
+                modifier = modifier
+            )
+        }
+        else -> { // Default for successfully sent/read messages
             Icon(
                 imageVector = Icons.Outlined.Done,
-                contentDescription = null,
+                contentDescription = "Sent/Read", // Added content description
                 modifier = modifier
             )
         }

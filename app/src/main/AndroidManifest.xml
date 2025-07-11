@@ -3,6 +3,12 @@
     xmlns:tools="http://schemas.android.com/tools"
     package="com.ibashkimi.telegram">
 
+    <!-- Request legacy external storage permission for API levels up to 28 -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+    <!-- For API 29 and above, MediaStore API is used which doesn't require this permission for app's own files in public directories. -->
+    <!-- If targeting API 33+ and need to access other apps' media files, might need READ_MEDIA_IMAGES, READ_MEDIA_VIDEO, etc. -->
+    <!-- For simplicity, we are only adding WRITE_EXTERNAL_STORAGE for older APIs. -->
+
     <application
         android:name=".TelegramApplication"
         android:allowBackup="true"
@@ -11,13 +17,15 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/AppTheme"
-        tools:ignore="GoogleAppIndexingWarning">
+        tools:ignore="GoogleAppIndexingWarning"
+        android:requestLegacyExternalStorage="true"> <!-- Required for API 29 if not fully migrated to Scoped Storage for all cases, though our save logic tries to be Q-compliant -->
+
         <activity
             android:name="com.ibashkimi.telegram.MainActivity"
+            android:exported="true" <!-- Required for activities with intent filters on API 31+ -->
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
